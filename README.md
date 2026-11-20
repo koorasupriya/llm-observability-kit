@@ -16,6 +16,18 @@ with obs.llm_call("demo-small", provider="anthropic", prompt=question) as call:
     call.record(LLMResult(resp.content[0].text, resp.usage.input_tokens, resp.usage.output_tokens))
 ```
 
+Trace the other steps of a request (retrieval, tool calls, post-processing) with a decorator. It works on sync and async functions:
+
+```python
+@obs.traced(kind="RETRIEVER", **{"retrieval.top_k": 4})
+async def search(query): ...
+
+@obs.traced("tool.create_ticket", kind="TOOL")
+def create_ticket(title): ...
+```
+
+`kind` uses OpenInference span kinds, so Phoenix shows each step with the right icon. Exceptions are recorded on the span and re-raised.
+
 ## What gets captured
 
 | Signal | Details |
@@ -76,7 +88,7 @@ export LLM_PRICING_FILE=pricing.json
 pytest
 ```
 
-Tests use OpenTelemetry's in-memory exporters to check span attributes, token, cost and latency metrics, error recording, flagging of unpriced models, trace parenting, and the demo API's HTTP → retrieval → LLM trace.
+Tests use OpenTelemetry's in-memory exporters to check span attributes, the `@traced` decorator on sync and async functions, token, cost and latency metrics, error recording, flagging of unpriced models, trace parenting, and the demo API's HTTP → retrieval → LLM trace.
 
 ## License
 

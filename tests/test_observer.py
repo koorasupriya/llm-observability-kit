@@ -86,6 +86,42 @@ def test_nested_spans_share_trace(obs):
     assert spans["chat m1"].context.trace_id == root.context.trace_id
 
 
+def test_traced_decorator_sync_and_async(obs):
+    import asyncio
+
+    @obs.traced(kind="RETRIEVER", **{"retrieval.top_k": 3})
+    def search(q):
+        return [q]
+
+    @obs.traced("tool.create_ticket", kind="TOOL")
+    async def create_ticket(title):
+        return {"title": title}
+
+    with obs.span("request"):
+        assert search("vpn") == ["vpn"]
+        assert asyncio.run(create_ticket("VPN down")) == {"title": "VPN down"}
+
+    spans = {s.name: s for s in obs.spans.get_finished_spans()}
+    assert search.__name__ == "search"  # functools.wraps keeps the original name
+    s = spans["test_traced_decorator_sync_and_async.<locals>.search"]
+    assert s.attributes["openinference.span.kind"] == "RETRIEVER"
+    assert s.attributes["retrieval.top_k"] == 3
+    assert s.parent.span_id == spans["request"].context.span_id
+    assert spans["tool.create_ticket"].attributes["openinference.span.kind"] == "TOOL"
+
+
+def test_traced_records_errors(obs):
+    @obs.traced("flaky")
+    def flaky():
+        raise ValueError("bad input")
+
+    with pytest.raises(ValueError):
+        flaky()
+    (span,) = obs.spans.get_finished_spans()
+    assert span.status.status_code == StatusCode.ERROR
+    assert span.events[0].attributes["exception.message"] == "bad input"
+
+
 def test_demo_api_produces_trace(monkeypatch):
     from fastapi.testclient import TestClient
 

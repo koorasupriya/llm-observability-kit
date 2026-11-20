@@ -6,6 +6,8 @@ The same call also updates metrics (tokens, cost, latency, errors) for Grafana d
 """
 from __future__ import annotations
 
+import functools
+import inspect
 import os
 import time
 from contextlib import contextmanager
@@ -94,6 +96,38 @@ class LLMObserver:
         """A generic child span (retrieval, tool call, post-processing...)."""
         with self.tracer.start_as_current_span(name, attributes=attributes) as s:
             yield s
+
+    def traced(self, name: str | None = None, kind: str = "CHAIN", **attributes):
+        """Decorator that wraps a sync or async function in a span.
+
+            @observer.traced(kind="RETRIEVER")
+            async def search(query): ...
+
+        `kind` follows OpenInference span kinds (CHAIN, RETRIEVER, TOOL, EMBEDDING, ...), so Phoenix
+        shows the step with the right icon. Exceptions are recorded on the span and re-raised.
+        """
+        def decorate(fn):
+            span_name = name or fn.__qualname__
+            attrs = {"openinference.span.kind": kind, "code.function": fn.__qualname__, **attributes}
+
+            def start():
+                return self.tracer.start_as_current_span(span_name, attributes=attrs,
+                                                         record_exception=True, set_status_on_exception=True)
+
+            if inspect.iscoroutinefunction(fn):
+                @functools.wraps(fn)
+                async def async_wrapper(*args, **kwargs):
+                    with start():
+                        return await fn(*args, **kwargs)
+                return async_wrapper
+
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                with start():
+                    return fn(*args, **kwargs)
+            return wrapper
+
+        return decorate
 
     @contextmanager
     def llm_call(self, model: str, provider: str = "unknown", prompt: str | None = None,
